@@ -36,6 +36,7 @@ import org.apache.solr.response.QueryResponseWriter;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.servlet.DirectSolrConnection;
+import org.mortbay.log.Log;
 import org.w3c.dom.Document;
 import org.xml.sax.SAXException;
 import org.apache.solr.common.util.NamedList.NamedListEntry;
@@ -184,11 +185,10 @@ public class TestHarness {
           initZooKeeper(System.getProperty("zkHost"), 10000);
         }
       };
-      
       CoreDescriptor dcore = new CoreDescriptor(container, coreName, solrConfig.getResourceLoader().getInstanceDir());
       dcore.setConfigName(solrConfig.getResourceName());
       dcore.setSchemaName(indexSchema.getResourceName());
-      SolrCore core = new SolrCore("collection1", dataDirectory, solrConfig, indexSchema, dcore);
+      SolrCore core = new SolrCore(coreName, dataDirectory, solrConfig, indexSchema, dcore);
       container.register(coreName, core, false);
 
       return container;
