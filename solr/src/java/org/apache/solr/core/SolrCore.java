@@ -648,7 +648,8 @@ public final class SolrCore implements SolrInfoMBean {
    * </ul>
    * @see #isClosed() 
    */
-  public void close() {
+  public void close(Boolean... params) {
+    boolean keepMBeans = params.length > 0 && params[0].booleanValue();
     int count = refCount.decrementAndGet();
     if (count > 0) return; // close is called often, and only actually closes if nothing is using it.
     if (count < 0) {
@@ -669,10 +670,12 @@ public final class SolrCore implements SolrInfoMBean {
     }
 
 
-    try {
-      infoRegistry.clear();
-    } catch (Exception e) {
-      SolrException.log(log, e);
+    if (!keepMBeans) {
+      try {
+        infoRegistry.clear();
+      } catch (Exception e) {
+        SolrException.log(log, e);
+      }
     }
     try {
       updateHandler.close();

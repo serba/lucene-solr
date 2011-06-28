@@ -712,8 +712,10 @@ public class CoreContainer
     if (core == null)
       throw new SolrException( SolrException.ErrorCode.BAD_REQUEST, "No such core: " + name );
 
+    core.getInfoRegistry().clear();
     SolrCore newCore = create(core.getCoreDescriptor());
-    register(name, newCore, false);
+    SolrCore oldCore = register(name, newCore, true);
+    oldCore.close(true);
   }
 
   private String checkDefault(String name) {
