@@ -37,8 +37,13 @@ public class ZKPropertiesWriter implements DIHPropertiesWriter {
   public void init(DataImporter dataImporter) {
     String collection = dataImporter.getCore().getCoreDescriptor()
         .getCloudDescriptor().getCollectionName();
-    path = "/configs/DIH_" + collection + "_" + dataImporter.getCore().getName()
-        + ".properties";
+    String persistFilename;
+    if(dataImporter.getHandlerName() == null){
+      persistFilename = dataImporter.getHandlerName() + ".properties";
+    } else {
+      persistFilename = SimplePropertiesWriter.IMPORTER_PROPERTIES;
+    }
+    path = "/configs/" + collection + "/" + persistFilename;
     zkClient = dataImporter.getCore().getCoreDescriptor().getCoreContainer()
         .getZkController().getZkClient();
   }
