@@ -113,7 +113,7 @@ public class SolrAddDocTask extends PerfTask {
       SolrServer solrServer = getRunData().getSolrServer();
       
       SolrInputDocument solrDoc = new SolrInputDocument();
-      List<Field> fields = doc.getFields();
+      List<IndexableField> fields = doc.getFields();
       for (IndexableField field : fields) {
         // System.err.println("field:" + field.name());
         String name = field.name();
