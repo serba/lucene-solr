@@ -17,9 +17,16 @@ package org.apache.lucene.benchmark.byTask;
  * limitations under the License.
  */
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.Closeable;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Locale;
@@ -47,6 +54,13 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.IOUtils;
+import org.apache.solr.client.solrj.SolrServer;
+import org.apache.solr.client.solrj.impl.CloudSolrServer;
+import org.apache.solr.client.solrj.impl.ConcurrentUpdateSolrServer;
+import org.apache.solr.client.solrj.impl.HttpSolrServer;
+import org.apache.solr.client.solrj.impl.XMLResponseParser;
+import org.apache.solr.client.solrj.request.CoreAdminRequest;
+import org.apache.solr.client.solrj.response.CoreAdminResponse;
 
 /**
  * Data maintained by a performance test run.
@@ -83,6 +97,7 @@ public class PerfRunData implements Closeable {
   private Directory directory;
   private Map<String,AnalyzerFactory> analyzerFactories = new HashMap<String,AnalyzerFactory>();
   private Analyzer analyzer;
+  private SolrServer solrServer;
   private DocMaker docMaker;
   private ContentSource contentSource;
   private FacetSource facetSource;
@@ -111,6 +126,14 @@ public class PerfRunData implements Closeable {
     analyzer = NewAnalyzerTask.createAnalyzer(config.get("analyzer",
         "org.apache.lucene.analysis.standard.StandardAnalyzer"));
 
+    String analyzerClass = config.get("analyzer",
+        "org.apache.lucene.analysis.standard.StandardAnalyzer");
+    if (analyzerClass != null) {
+      analyzer = NewAnalyzerTask.createAnalyzer(analyzerClass);
+    }
+    
+    initSolrStuff();
+    
     // content source
     String sourceClass = config.get("content.source", "org.apache.lucene.benchmark.byTask.feeds.SingleDocSource");
     contentSource = Class.forName(sourceClass).asSubclass(ContentSource.class).newInstance();
@@ -155,7 +178,150 @@ public class PerfRunData implements Closeable {
     }
     IOUtils.close(perfObjectsToClose);
   }
-
+  
+  private void initSolrStuff() throws Exception {
+    String solrServerUrl = config.get("solr.url", null);
+    boolean internalSolrServer = false;
+    if (solrServerUrl == null) {
+      
+      internalSolrServer = true;
+      solrServerUrl = "http://localhost:8983/solr";
+    }
+    
+    String solrCollection = config.get("solr.collection", "collection1");
+    String solrServerClass = config.get("solr.server", null);
+    
+    if (!internalSolrServer) {
+      if (solrServerUrl == null || solrServerClass == null) {
+        throw new RuntimeException(
+            "You must set solr.url and solr.server to run a remote benchmark algorithm");
+      }
+    }
+    
+    if (solrServerClass != null) {
+      Class<?> clazz = this.getClass().getClassLoader()
+          .loadClass(solrServerClass);
+      
+      if (clazz == CloudSolrServer.class) {
+        String zkHost = config.get("solr.zkhost", null);
+        if (zkHost == null) {
+          throw new RuntimeException(
+              "CloudSolrServer is used with no solr.zkhost specified");
+        }
+        zkHost = zkHost.replaceAll("\\|", ":");
+        System.out.println("------------> new CloudSolrServer with ZkHost:"
+            + zkHost);
+        
+        Constructor[] cons = clazz.getConstructors();
+        for (Constructor con : cons) {
+          Class[] types = con.getParameterTypes();
+          if (types.length == 1 && types[0] == String.class) {
+            solrServer = (SolrServer) con.newInstance(zkHost);
+          }
+        }
+        ((CloudSolrServer) solrServer).setDefaultCollection(solrCollection);
+      } else if (clazz == HttpSolrServer.class) {
+        System.out.println("------------> new HttpSolrServer with URL:"
+            + solrServerUrl + "/" + solrCollection);
+        Constructor[] cons = clazz.getConstructors();
+        for (Constructor con : cons) {
+          Class[] types = con.getParameterTypes();
+          if (types.length == 1 && types[0] == String.class) {
+            solrServer = (SolrServer) con.newInstance(solrServerUrl + "/"
+                + solrCollection);
+            break;
+          }
+        }
+      } else if (clazz == ConcurrentUpdateSolrServer.class) {
+        System.out.println("------------> new ConcurrentUpdateSolrServer with URL:"
+            + solrServerUrl + "/" + solrCollection);
+        Constructor[] cons = clazz.getConstructors();
+        for (Constructor con : cons) {
+          Class[] types = con.getParameterTypes();
+          if (types.length == 3 && clazz == ConcurrentUpdateSolrServer.class) {
+            int queueSize = config.get("solr.streaming.server.queue.size", 100);
+            int threadCount = config
+                .get("solr.streaming.server.threadcount", 2);
+            solrServer = (SolrServer) con.newInstance(solrServerUrl + "/"
+                + solrCollection, queueSize, threadCount);
+          }
+        }
+      }
+     
+      
+      if (solrServer == null) {
+        throw new RuntimeException("Could not understand solr.server config:"
+            + solrServerClass);
+        
+      }
+    }
+    
+    String configDir = config.get("solr.config.dir", null);
+    
+    if (configDir == null && internalSolrServer) {
+      configDir = "../../solr/example/solr/collection1/conf";
+    }
+    
+    String configsHome = config.get("solr.configs.home", null);
+    
+    if (configDir != null && configsHome != null) {
+      System.out.println("------------> solr.configs.home: "
+          + new File(configsHome).getAbsolutePath());
+      String solrConfig = config.get("solr.config", null);
+      String schema = config.get("solr.schema", null);
+      
+      boolean copied = false;
+      
+      if (solrConfig != null) {
+        File solrConfigFile = new File(configsHome, solrConfig);
+        if (solrConfigFile.exists() && solrConfigFile.canRead()) {
+          copy(solrConfigFile, new File(configDir, "solrconfig.xml"));
+          copied = true;
+        } else {
+          throw new RuntimeException("Could not find or read:" + solrConfigFile);
+        }
+      }
+      if (schema != null) {
+        
+        File schemaFile = new File(configsHome, schema);
+        if (schemaFile.exists() && schemaFile.canRead()) {
+          System.out.println("------------> using schema: " + schema);
+          copy(schemaFile, new File(configDir, "schema.xml"));
+          copied = true;
+        } else {
+          throw new RuntimeException("Could not find or read:" + schemaFile);
+        }
+      }
+      
+      if (copied && solrServer != null && !internalSolrServer) {
+        // nocommit: hard coded collection1 and check response
+        CoreAdminResponse result = CoreAdminRequest.reloadCore(solrCollection,
+            new HttpSolrServer(solrServerUrl));
+      }
+    }
+    
+  }
+  
+  // closes streams for you
+  private static void copy(File in, File out) throws IOException {
+    System.out.println("------------> copying: " + in + " to " + out.getAbsolutePath());
+    FileOutputStream os = new FileOutputStream(out);
+    FileInputStream is = new FileInputStream(in);
+    BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(os,
+        "UTF-8"));
+    BufferedReader reader = new BufferedReader(new InputStreamReader(is,
+        "UTF-8"));
+    try {
+      String line;
+      while ((line = reader.readLine()) != null) {
+        writer.write(line + System.getProperty("line.separator"));
+      }
+    } finally {
+      reader.close();
+      writer.close();
+    }
+  }
+  
   // clean old stuff, reopen 
   public void reinit(boolean eraseIndex) throws Exception {
 
@@ -174,6 +340,7 @@ public class PerfRunData implements Closeable {
 
     // inputs
     resetInputs();
+    initSolrStuff();
     
     // release unused stuff
     System.runFinalization();
@@ -181,6 +348,14 @@ public class PerfRunData implements Closeable {
 
     // Re-init clock
     setStartTimeMillis();
+  }
+  
+  public final SolrServer getSolrServer() {
+    return solrServer;
+  }
+  
+  public final void setSolrServer(SolrServer solrServer) {
+    this.solrServer = solrServer;
   }
 
   private Directory createDirectory(boolean eraseIndex, String dirName,
