@@ -149,9 +149,15 @@
       <pathelement path="${facet.jar}"/>
       <pathelement path="${queries.jar}"/>
       <fileset dir="${common.dir}/analysis/icu/lib"/>
+      <pathelement location="../../solr/build/solr-solrj/classes/java"/>
       <path refid="base.classpath"/>
       <fileset dir="lib"/>
-    </path>
+      <!-- used to run solr benchmarks -->
+        <pathelement path="../../solr/dist/apache-solr-solrj-*.jar" />
+        <fileset dir="../../solr/dist/solrj-lib">
+          <include name="**/*.jar" />
+        </fileset>      
+      </path>
     <path id="run.classpath">
         <path refid="classpath"/>
         <pathelement location="${build.dir}/classes/java"/>
